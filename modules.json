@@ -15,7 +15,13 @@
             "gatk4/baserecalibrator": {
                 "git_sha": "409af2f27cbe45109acc7fee70718d2bf20aa449"
             },
+            "gatk4/genomicsdbimport": {
+                "git_sha": "409af2f27cbe45109acc7fee70718d2bf20aa449"
+            },
             "gatk4/haplotypecaller": {
+                "git_sha": "409af2f27cbe45109acc7fee70718d2bf20aa449"
+            },
+            "gatk4/intervallisttools": {
                 "git_sha": "409af2f27cbe45109acc7fee70718d2bf20aa449"
             },
             "gunzip": {

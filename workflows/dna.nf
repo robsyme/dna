@@ -18,7 +18,7 @@ for (param in checkPathParamList) { if (param) { file(param, checkIfExists: true
 if (params.readsets)   { ch_input = file(params.readsets) } else { exit 1, 'Input readset not specified!' }
 
 // Check alignment parameters
-def prepareToolIndices  = ['dict', 'fai']
+def prepareToolIndices  = ['dict', 'fai', 'intervals']
 if (!params.skip_alignment) { prepareToolIndices << params.aligner }
 
 
@@ -111,22 +111,22 @@ workflow DNA {
     PICARD_SORT_AFTER_DEDUP.out.bam | SAMTOOLS_INDEX
 
     ch_recal_intervals = Channel.empty()
-    if (params.recalibration_intervals) {
-        Channel.fromPath(params.recalibration_intervals)
+    if (params.intervals) {
+        Channel.fromPath(params.intervals)
         | splitText()
-        ch_recal_intervals.mix(Channel.fromPath(params.recalibration_intervals))
+        ch_recal_intervals.mix(Channel.fromPath(params.intervals))
     }
 
     // Base recalibration
     if(!params.skip_recalibration && params.recalibration_vcfs) {
 
-        ch_bam_bai = PICARD_SORT_AFTER_DEDUP.out.bam.join (SAMTOOLS_INDEX.out.bai)
-        ch_bam_bai_intervals = ch_bam_bai.combine ( ch_recal_intervals.ifEmpty([[]]) )
+        ch_bam_bai = PICARD_SORT_AFTER_DEDUP.out.bam.join( SAMTOOLS_INDEX.out.bai )
+        ch_bam_bai_intervals = ch_bam_bai.combine( PREPARE_GENOME.out.interval_list_concat )
 
         ArrayList<String> vcfs = params.recalibration_vcfs.split(",")
         ArrayList<String> tbis = vcfs.collect{ it + ".tbi"}
-        ch_recalibration_vcfs = Channel.fromPath(vcfs).flatten().first()
-        ch_recalibration_tbis = Channel.fromPath(tbis).flatten().first()
+        ch_recalibration_vcfs = Channel.fromPath(vcfs).toList()
+        ch_recalibration_tbis = Channel.fromPath(tbis).toList()
 
         GATK4_BASERECALIBRATOR (
             ch_bam_bai_intervals,
@@ -138,9 +138,10 @@ workflow DNA {
         )
 
         ch_bam_bai_recal = ch_bam_bai.join( GATK4_BASERECALIBRATOR.out.table )
+        ch_bam_bai_recal_intervals = ch_bam_bai_recal.combine( PREPARE_GENOME.out.interval_list_concat )
 
         GATK4_APPLYBQSR (
-            ch_bam_bai_recal.combine( ch_recal_intervals.ifEmpty([[]]) ),
+            ch_bam_bai_recal_intervals,
             PREPARE_GENOME.out.fasta,
             PREPARE_GENOME.out.fai,
             PREPARE_GENOME.out.dict
@@ -156,11 +157,12 @@ workflow DNA {
 
     ch_bam_for_haplotypecaller
     | join( SAMTOOLS_INDEX_FOR_HAPLOTYPING( ch_bam_for_haplotypecaller ).bai )
-    | combine( ch_recal_intervals.ifEmpty([[]]) )
+    | combine( PREPARE_GENOME.out.interval_list )
     | set { ch_haplotypecaller_inputs }
 
     ch_dbsnp_vcfs = Channel.fromPath( params.dbsnp ).flatten().first()
     ch_dbsnp_tbis = Channel.fromPath( params.dbsnp + ".tbi" ).flatten().first()
+
     GATK4_HAPLOTYPECALLER (
         ch_haplotypecaller_inputs,
         PREPARE_GENOME.out.fasta,
@@ -169,6 +171,10 @@ workflow DNA {
         ch_dbsnp_vcfs,
         ch_dbsnp_tbis
     )
+
+    GATK4_HAPLOTYPECALLER.out.vcf
+    | join( GATK4_HAPLOTYPECALLER.out.tbi )
+    | view
 
     CUSTOM_DUMPSOFTWAREVERSIONS (
         ch_versions.unique().collectFile(name: 'collated_versions.yml')

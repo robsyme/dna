@@ -1,5 +1,5 @@
 process GATK4_BASERECALIBRATOR {
-    tag "$meta.id"
+    // tag "$meta.id"
     label 'process_low'
 
     conda (params.enable_conda ? "bioconda::gatk4=4.2.5.0" : null)

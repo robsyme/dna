@@ -75,13 +75,6 @@
                 ]
             }
         },
-        "required": [
-            "sample",
-            "readset",
-            "runtype",
-            "run",
-            "lane",
-            "fastq_1"
-        ]
+        "required": ["sample", "readset", "runtype", "run", "lane", "fastq_1"]
     }
 }

@@ -1,6 +1,6 @@
-# nf-core/dna: Documentation
+# nf-core/robsyme-dna: Documentation
 
-The nf-core/dna documentation is split into the following pages:
+The nf-core/robsyme-dna documentation is split into the following pages:
 
 - [Usage](usage.md)
   - An overview of how the pipeline works, how to run it and a description of all of the different command-line flags.

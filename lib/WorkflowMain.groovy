@@ -73,8 +73,8 @@ class WorkflowMain {
         NfcoreTemplate.awsBatch(workflow, params)
 
         // Check input has been provided
-        if (!params.input) {
-            log.error "Please provide an input samplesheet to the pipeline e.g. '--input samplesheet.csv'"
+        if (!params.readsets) {
+            log.error "Please provide an input readsets file to the pipeline e.g. '--readsets samplesheet.csv'"
             System.exit(1)
         }
     }

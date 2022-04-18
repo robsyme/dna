@@ -11,11 +11,17 @@ WorkflowDna.initialise(params, log)
 
 // TODO nf-core: Add all file path parameters for the pipeline to the list below
 // Check input path parameters to see if they exist
-def checkPathParamList = [ params.input, params.multiqc_config, params.fasta ]
+def checkPathParamList = [ params.readsets, params.multiqc_config, params.fasta ]
 for (param in checkPathParamList) { if (param) { file(param, checkIfExists: true) } }
 
 // Check mandatory parameters
-if (params.input) { ch_input = file(params.input) } else { exit 1, 'Input samplesheet not specified!' }
+if (params.readsets)   { ch_input = file(params.readsets) } else { exit 1, 'Input readset not specified!' }
+
+// Check alignment parameters
+def prepareToolIndices  = ['dict', 'fai']
+if (!params.skip_alignment) { prepareToolIndices << params.aligner }
+
+
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -31,11 +37,14 @@ ch_multiqc_custom_config = params.multiqc_config ? Channel.fromPath(params.multi
     IMPORT LOCAL MODULES/SUBWORKFLOWS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
+include { FASTP                                      } from '../modules/local/fastp/main'
 
 //
 // SUBWORKFLOW: Consisting of a mix of local and nf-core/modules
 //
-include { INPUT_CHECK } from '../subworkflows/local/input_check'
+include { INPUT_CHECK            } from '../subworkflows/local/input_check'
+include { PREPARE_GENOME         } from '../subworkflows/local/prepare_genome'
+include { BWA_MEM                } from '../modules/local/bwa/mem/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -46,12 +55,21 @@ include { INPUT_CHECK } from '../subworkflows/local/input_check'
 //
 // MODULE: Installed directly from nf-core/modules
 //
-include { FASTQC                      } from '../modules/nf-core/modules/fastqc/main'
-include { MULTIQC                     } from '../modules/nf-core/modules/multiqc/main'
-include { CUSTOM_DUMPSOFTWAREVERSIONS } from '../modules/nf-core/modules/custom/dumpsoftwareversions/main'
+include { MULTIQC                                          } from '../modules/nf-core/modules/multiqc/main'
+include { CUSTOM_DUMPSOFTWAREVERSIONS                      } from '../modules/nf-core/modules/custom/dumpsoftwareversions/main'
+include { SAMTOOLS_INDEX                                   } from '../modules/nf-core/modules/samtools/index/main'
+include { PICARD_MERGESAMFILES                             } from '../modules/nf-core/modules/picard/mergesamfiles/main'
+include { PICARD_SORTSAM as PICARD_SORT_BEFORE_DEDUP       } from '../modules/nf-core/modules/picard/sortsam/main'
+include { PICARD_MARKDUPLICATES                            } from '../modules/nf-core/modules/picard/markduplicates/main'
+include { PICARD_SORTSAM as PICARD_SORT_AFTER_DEDUP        } from '../modules/nf-core/modules/picard/sortsam/main'
+include { GATK4_BASERECALIBRATOR                           } from '../modules/nf-core/modules/gatk4/baserecalibrator/main'
+include { GATK4_APPLYBQSR                                  } from '../modules/nf-core/modules/gatk4/applybqsr/main'
+include { GATK4_HAPLOTYPECALLER                            } from '../modules/nf-core/modules/gatk4/haplotypecaller/main'
+include { SAMTOOLS_INDEX as SAMTOOLS_INDEX_FOR_HAPLOTYPING } from '../modules/nf-core/modules/samtools/index/main'
+
 
 /*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     RUN MAIN WORKFLOW
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
@@ -63,29 +81,100 @@ workflow DNA {
 
     ch_versions = Channel.empty()
 
-    //
     // SUBWORKFLOW: Read in samplesheet, validate and stage input files
-    //
-    INPUT_CHECK (
-        ch_input
-    )
+    INPUT_CHECK(ch_input)
+
     ch_versions = ch_versions.mix(INPUT_CHECK.out.versions)
 
-    //
-    // MODULE: Run FastQC
-    //
-    FASTQC (
-        INPUT_CHECK.out.reads
+    PREPARE_GENOME( prepareToolIndices )
+
+    // Module: Run Fastp
+    FASTP(INPUT_CHECK.out.reads, false, false)
+    ch_versions = ch_versions.mix(FASTP.out.versions.first())
+
+    // Module: Run bwa mem
+    BWA_MEM (FASTP.out.reads, PREPARE_GENOME.out.bwa_index, false).bam
+    | map { meta, bam -> [ [id:meta.sample], bam] }
+    | groupTuple()
+    | PICARD_MERGESAMFILES // BAM files are merged per sample
+
+    ch_versions = ch_versions.mix(BWA_MEM.out.versions.first())
+    ch_versions = ch_versions.mix(PICARD_MERGESAMFILES.out.versions.first())
+
+
+    PICARD_SORT_BEFORE_DEDUP (PICARD_MERGESAMFILES.out.bam, 'queryname').bam | PICARD_MARKDUPLICATES
+    PICARD_SORT_AFTER_DEDUP (PICARD_MARKDUPLICATES.out.bam, 'coordinate')
+
+    ch_versions = ch_versions.mix(PICARD_SORT_BEFORE_DEDUP.out.versions.first())
+    ch_versions = ch_versions.mix(PICARD_MARKDUPLICATES.out.versions.first())
+
+    PICARD_SORT_AFTER_DEDUP.out.bam | SAMTOOLS_INDEX
+
+    ch_recal_intervals = Channel.empty()
+    if (params.recalibration_intervals) {
+        Channel.fromPath(params.recalibration_intervals)
+        | splitText()
+        ch_recal_intervals.mix(Channel.fromPath(params.recalibration_intervals))
+    }
+
+    // Base recalibration
+    if(!params.skip_recalibration && params.recalibration_vcfs) {
+
+        ch_bam_bai = PICARD_SORT_AFTER_DEDUP.out.bam.join (SAMTOOLS_INDEX.out.bai)
+        ch_bam_bai_intervals = ch_bam_bai.combine ( ch_recal_intervals.ifEmpty([[]]) )
+
+        ArrayList<String> vcfs = params.recalibration_vcfs.split(",")
+        ArrayList<String> tbis = vcfs.collect{ it + ".tbi"}
+        ch_recalibration_vcfs = Channel.fromPath(vcfs).flatten().first()
+        ch_recalibration_tbis = Channel.fromPath(tbis).flatten().first()
+
+        GATK4_BASERECALIBRATOR (
+            ch_bam_bai_intervals,
+            PREPARE_GENOME.out.fasta,
+            PREPARE_GENOME.out.fai,
+            PREPARE_GENOME.out.dict,
+            ch_recalibration_vcfs,
+            ch_recalibration_tbis
+        )
+
+        ch_bam_bai_recal = ch_bam_bai.join( GATK4_BASERECALIBRATOR.out.table )
+
+        GATK4_APPLYBQSR (
+            ch_bam_bai_recal.combine( ch_recal_intervals.ifEmpty([[]]) ),
+            PREPARE_GENOME.out.fasta,
+            PREPARE_GENOME.out.fai,
+            PREPARE_GENOME.out.dict
+        )
+
+        ch_bam_for_haplotypecaller = GATK4_APPLYBQSR.out.bam
+
+    } else if (!params.recalibration_vcfs) {
+        log.warn "No recalibration VCFs provided - skipping GATK recalibration step. Use --skip_recalibration to supress this warning."
+    } else {
+        ch_bam_for_haplotypecaller = PICARD_SORT_AFTER_DEDUP.out.bam
+    }
+
+    ch_bam_for_haplotypecaller
+    | join( SAMTOOLS_INDEX_FOR_HAPLOTYPING( ch_bam_for_haplotypecaller ).bai )
+    | combine( ch_recal_intervals.ifEmpty([[]]) )
+    | set { ch_haplotypecaller_inputs }
+
+    ch_dbsnp_vcfs = Channel.fromPath( params.dbsnp ).flatten().first()
+    ch_dbsnp_tbis = Channel.fromPath( params.dbsnp + ".tbi" ).flatten().first()
+    GATK4_HAPLOTYPECALLER (
+        ch_haplotypecaller_inputs,
+        PREPARE_GENOME.out.fasta,
+        PREPARE_GENOME.out.fai,
+        PREPARE_GENOME.out.dict,
+        ch_dbsnp_vcfs,
+        ch_dbsnp_tbis
     )
-    ch_versions = ch_versions.mix(FASTQC.out.versions.first())
 
     CUSTOM_DUMPSOFTWAREVERSIONS (
         ch_versions.unique().collectFile(name: 'collated_versions.yml')
     )
 
-    //
     // MODULE: MultiQC
-    //
     workflow_summary    = WorkflowDna.paramsSummaryMultiqc(workflow, summary_params)
     ch_workflow_summary = Channel.value(workflow_summary)
 
@@ -94,7 +183,6 @@ workflow DNA {
     ch_multiqc_files = ch_multiqc_files.mix(ch_multiqc_custom_config.collect().ifEmpty([]))
     ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))
     ch_multiqc_files = ch_multiqc_files.mix(CUSTOM_DUMPSOFTWAREVERSIONS.out.mqc_yml.collect())
-    ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.zip.collect{it[1]}.ifEmpty([]))
 
     MULTIQC (
         ch_multiqc_files.collect()

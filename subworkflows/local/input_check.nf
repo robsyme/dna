@@ -2,43 +2,54 @@
 // Check input samplesheet and get read channels
 //
 
-include { SAMPLESHEET_CHECK } from '../../modules/local/samplesheet_check'
+include { READSETS_CHECK } from '../../modules/local/readsets_check'
 
 workflow INPUT_CHECK {
     take:
-    samplesheet // file: /path/to/samplesheet.csv
+    readsets // file: /path/to/samplesheet.csv
 
     main:
-    SAMPLESHEET_CHECK ( samplesheet )
-        .csv
-        .splitCsv ( header:true, sep:',' )
-        .map { create_fastq_channel(it) }
-        .set { reads }
+    READSETS_CHECK( readsets ).csv
+    .splitCsv( header:true, sep:',')
+    .branch {
+        bams: it.BAM
+        fastqs: it.FASTQ1
+            return create_fastq_channel(it)
+    }.set { reads }
 
     emit:
-    reads                                     // channel: [ val(meta), [ reads ] ]
-    versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
+    reads = reads.fastqs                   // channel: [ val(meta), [ reads ] ]
+    versions = READSETS_CHECK.out.versions // channel: [ versions.yml ]
 }
 
 // Function to get list of [ meta, [ fastq_1, fastq_2 ] ]
 def create_fastq_channel(LinkedHashMap row) {
     // create meta map
     def meta = [:]
-    meta.id         = row.sample
-    meta.single_end = row.single_end.toBoolean()
+    meta.id            = row.Readset
+    meta.sample        = row.Sample
+    meta.library       = row.Library
+    meta.runtype       = row.RunType
+    meta.run           = row.Run
+    meta.lane          = row.Lane
+    meta.adapter1      = row.Adapter1
+    meta.adapter2      = row.Adapter2
+    meta.qualityoffset = row.QualityOffset
+    meta.bed           = row.BED
+    meta.single_end    = row.single_end.toBoolean()
 
     // add path(s) of the fastq file(s) to the meta map
     def fastq_meta = []
-    if (!file(row.fastq_1).exists()) {
-        exit 1, "ERROR: Please check input samplesheet -> Read 1 FastQ file does not exist!\n${row.fastq_1}"
+    if (!file(row.FASTQ1).exists()) {
+        exit 1, "ERROR: Please check input samplesheet -> Read 1 FastQ file does not exist!\n${row.FASTQ1}"
     }
     if (meta.single_end) {
-        fastq_meta = [ meta, [ file(row.fastq_1) ] ]
+        fastq_meta = [ meta, [ file(row.FASTQ1) ] ]
     } else {
-        if (!file(row.fastq_2).exists()) {
-            exit 1, "ERROR: Please check input samplesheet -> Read 2 FastQ file does not exist!\n${row.fastq_2}"
+        if (!file(row.FASTQ2).exists()) {
+            exit 1, "ERROR: Please check input samplesheet -> Read 2 FastQ file does not exist!\n${row.FASTQ2}"
         }
-        fastq_meta = [ meta, [ file(row.fastq_1), file(row.fastq_2) ] ]
+        fastq_meta = [ meta, [ file(row.FASTQ1), file(row.FASTQ2) ] ]
     }
     return fastq_meta
 }

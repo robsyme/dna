@@ -66,6 +66,9 @@ workflow PREPARE_GENOME {
     if ('intervals' in prepare_tool_indices) {
         if (params.intervals) {
             ch_interval_list = Channel.fromPath(params.intervals)
+            if (params.scatter_count) {
+                Channel.fromPath(params.intervals)
+            }
         } else {
             Channel.from(ch_fasta)
             | map { [[id:it.baseName], it]}
@@ -75,7 +78,6 @@ workflow PREPARE_GENOME {
             ch_interval_list = PICARD_SCATTERINTERVALSBYNS.out.interval_list.map { meta, path -> path }
             ch_versions = ch_versions.mix(PICARD_SCATTERINTERVALSBYNS.out.versions)
         }
-
         ch_interval_list.toList() | map { [[id:"all"], it]} | GATK4_CONCAT_INTERVALLIST
         ch_interval_list_concat = GATK4_CONCAT_INTERVALLIST.out.interval_list.map { meta, path -> path }
     }

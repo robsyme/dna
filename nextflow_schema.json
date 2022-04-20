@@ -77,7 +77,8 @@
                 "intervals": {
                     "type": "string",
                     "default": "None",
-                    "hidden": true
+                    "hidden": true,
+                    "description": "Interval files to restrict genotyping"
                 },
                 "recalibration_vcfs": {
                     "type": "string",
@@ -86,7 +87,12 @@
                 },
                 "dbsnp": {
                     "type": "string",
-                    "default": null
+                    "default": "None",
+                    "description": "Path to dbsnp VCF"
+                },
+                "scatter_count": {
+                    "type": "number",
+                    "description": "Number of regions to divide the genome into for Genotyping"
                 }
             }
         },

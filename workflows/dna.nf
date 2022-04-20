@@ -174,7 +174,12 @@ workflow DNA {
 
     GATK4_HAPLOTYPECALLER.out.vcf
     | join( GATK4_HAPLOTYPECALLER.out.tbi )
+    | groupTuple
     | view
+
+
+
+
 
     CUSTOM_DUMPSOFTWAREVERSIONS (
         ch_versions.unique().collectFile(name: 'collated_versions.yml')

@@ -29,8 +29,7 @@ process GATK4_CONCAT_INTERVALLIST {
         avail_mem = task.memory.giga
     }
     """
-
-    mkdir outputs
+    mkdir -p outputs
 
     gatk --java-options "-Xmx${avail_mem}g" IntervalListTools \\
         ACTION=CONCAT SORT=true UNIQUE=true \\

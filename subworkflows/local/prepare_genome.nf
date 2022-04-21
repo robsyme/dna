@@ -70,7 +70,7 @@ workflow PREPARE_GENOME {
                 Channel.fromPath(params.intervals)
             }
         } else {
-            log.warn("Creating intervals from fasta")
+            Channel.from(ch_fasta)
             | map { [[id:it.baseName], it]}
             | join( SAMTOOLS_FAIDX.out.fai )
             | join( PICARD_CREATESEQUENCEDICTIONARY.out.reference_dict )

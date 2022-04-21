@@ -23,12 +23,12 @@ workflow PREPARE_GENOME {
     // Uncompress bwa index or generate from scratch if required
     ch_bwa_index = Channel.empty()
     if ('bwa' in prepare_tool_indices) {
-        if (params.bwa_index) {
-            if (params.bwa_index.endsWith('.tar.gz')) {
-                ch_bwa_index = UNTAR_BWA_INDEX ( params.bwa_index ).untar
+        if (params.bwa) {
+            if (params.bwa.endsWith('.tar.gz')) {
+                ch_bwa_index = UNTAR_BWA_INDEX ( params.bwa ).untar
                 ch_versions = ch_versions.mix(UNTAR_BWA_INDEX.out.versions)
             } else {
-                ch_bwa_index = file(params.bwa_index)
+                ch_bwa_index = file(params.bwa)
             }
         } else {
             ch_bwa_index = BWA_INDEX ( ch_fasta ).index.map { meta, path -> path }

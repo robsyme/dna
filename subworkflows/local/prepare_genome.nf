@@ -31,7 +31,7 @@ workflow PREPARE_GENOME {
                 ch_bwa_index = file(params.bwa)
             }
         } else {
-            ch_bwa_index = BWA_INDEX ( ch_fasta ).index.map { meta, path -> path }
+            ch_bwa_index = BWA_INDEX ( ch_fasta ).index
             ch_versions = ch_versions.mix(BWA_INDEX.out.versions)
         }
     }
@@ -70,11 +70,12 @@ workflow PREPARE_GENOME {
                 Channel.fromPath(params.intervals)
             }
         } else {
-            Channel.from(ch_fasta)
+            log.warn("Creating intervals from fasta")
             | map { [[id:it.baseName], it]}
             | join( SAMTOOLS_FAIDX.out.fai )
             | join( PICARD_CREATESEQUENCEDICTIONARY.out.reference_dict )
             | PICARD_SCATTERINTERVALSBYNS
+
             ch_interval_list = PICARD_SCATTERINTERVALSBYNS.out.interval_list.map { meta, path -> path }
             ch_versions = ch_versions.mix(PICARD_SCATTERINTERVALSBYNS.out.versions)
         }
